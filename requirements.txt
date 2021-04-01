@@ -1,0 +1,10 @@
+pandas>=1.0.3
+plotly-geo>=1.0.0
+scipy>=1.5.2
+numpy>=1.19.2
+scikit-learn==0.24.1
+texttable==1.6.3
+latextable==0.1.1
+dataframe_image
+corrplot
+tidyverse
