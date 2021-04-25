@@ -1,8 +1,10 @@
 import pandas as pd
 from sklearn.decomposition import PCA
 from sklearn.preprocessing import LabelEncoder
+import numpy as np
 
-#print(sklearn.__version__)
+
+#name of the features without directive priors
 features_without_omega = ['pair_id','date','new_cases_smoothed_pm_raw_i',
             'new_deaths_smoothed_pm_raw_i','new_cases_smoothed_pm_raw_j',
             'new_deaths_smoothed_pm_raw_j','c1_schoolclosing_ma_i', 'c1_schoolclosing_ma_j',
@@ -16,7 +18,7 @@ features_without_omega = ['pair_id','date','new_cases_smoothed_pm_raw_i',
             'h3_contacttracing_ma_i', 'h3_contacttracing_ma_j']
 
 
-
+#name of the features with the directive priors (omega weights)
 features_with_omega = ['pair_id','date','new_cases_smoothed_pm_i_wji_ac',
                          'new_deaths_smoothed_pm_i_wji_ac','new_cases_smoothed_pm_j_wji_ac',
                          'new_deaths_smoothed_pm_j_wji_ac', 'c1_schoolclosing_ma_i_wji_ac',
@@ -30,6 +32,7 @@ features_with_omega = ['pair_id','date','new_cases_smoothed_pm_i_wji_ac',
                          'c8_int_trvl_controls_ma_j_wji_ac',  'h2_testingpolicy_ma_i_wji_ac',
                          'h2_testingpolicy_ma_j_wji_ac', 'h3_contacttracing_ma_i_wji_ac',
                          'h3_contacttracing_ma_j_wji_ac']
+
 
 features_name_asymmetric = ['pair_id','date','new_cases_per_million_i',
                         'new_deaths_per_million_i','new_cases_per_million_j',
@@ -50,21 +53,46 @@ features_name = ['pair_id','date','new_cases_per_million','new_deaths_per_millio
                  'c7_restr_internal_move', 'c8_int_trvl_controls','h2_testingpolicy','h3_contacttracing']
 
 def remove_outliers_and_divide_baseline(df_cont):
-  df_cont.insert(5,'traffic_baseline',0.0)
-  df_cont = df_cont.drop(df_cont[df_cont.pairname.isin(['Croatia Hungary', 'Hungary Slovenia', 'Finland Norway'])].index)
-  for pairname in df_cont.pairname.unique():
-    data = df_cont[df_cont.pairname == pairname]
-    baseline = data[data.date=='2020-02-29']['max_travel_ma'].values[0]
-    if baseline != 0.0:
-      df_cont.loc[data.index,'traffic_baseline'] = baseline
-    else:
-      df_cont = df_cont.drop(data.index)
-  df_cont['traffic_growth'] = (df_cont['max_travel_ma'] - df_cont['traffic_baseline'])/ df_cont['traffic_baseline']
-  return df_cont
+    """
+    This function remove the corridor outliers from the df_cont DataFrame and calculates the traffic growth rate of
+    each observation by dividing the raw value of traffic by a baseline. For each corridor, this baseline corresponds to
+    the raw value of traffic on the first day in the database (2020-02-29).
+    :param df_cont: The pandas DataFrame containing all the observations
+    :return: a pandas DataFrame based on df_cont but without the rows corresponding to the outliers and with 2 new
+    columns:
+        - traffic_growth which represents the traffic growth rate for a certain corridor and day
+        - traffic_baseline which is the baseline raw traffic value for the concerned corridor
+    """
+
+    df_cont.insert(5,'traffic_baseline',0.0)
+    df_cont = df_cont.drop(df_cont[df_cont.pairname.isin(['Croatia Hungary', 'Hungary Slovenia', 'Finland Norway','Romania Serbia'])].index)
+    for pairname in df_cont.pairname.unique():
+        data = df_cont[df_cont.pairname == pairname]
+        baseline = data[data.date=='2020-02-29']['max_travel_ma'].values[0]
+        if baseline != 0.0:
+          df_cont.loc[data.index,'traffic_baseline'] = baseline
+        else:
+          df_cont = df_cont.drop(data.index)
+    df_cont['traffic_growth'] = (df_cont['max_travel_ma'] - df_cont['traffic_baseline'])/ df_cont['traffic_baseline']
+    return df_cont
 
 
 
-def get_Xy(omega=False,pca=0):
+def get_Xy(omega=True,pca=0,add_lags=False):
+    """
+    This function creates the DataFrames X and y that respectively represents the training data and the target variable
+    :param omega: if set to true, the version with the directive priors (weights omega) of the features is used
+    :param pca: if not null, a PCA is conducted on each of the policy measure features set (one for each country).
+    The value of the pca parameter represents the number of PCA component to be use instead of the corresponding
+    variables.
+    :param add_lags: if set to True, four  new  country-specific features are inserted in addition to the initial ones:
+    lags of 7 and 14 days of new Covid cases and deaths are included.
+    :return: - X, a pandas Dataframe of size (n_samples,n_features) corresponding to the training data. The columns
+    are the different input features used in the training and the rows are the set of observations the model will be
+    trained with.
+            - y, a pandas DataFrame of size (n_samples,1) corresponding to the target variable (the traffic growth
+    rate). The rows are the same set of observations as in self.X
+    """
     fb_df = pd.read_csv("../data/fb_with_omegas.csv")
     fb_df = fb_df.rename(columns={'id': 'pair_id', 't': 'date'})
     d_months = {'jan': '01', 'feb': '02', 'mar': '03', 'apr': '04', 'may': '05', 'jun': '06', 'jul': '07', 'aug': '08',
@@ -83,13 +111,6 @@ def get_Xy(omega=False,pca=0):
 
 
     fb_df_input.columns = features_name_asymmetric
-    data_double = fb_df_input.copy()
-    for col in features_name[2:]:
-        data_double[col+'_j'] = fb_df_input[col+'_i']
-        data_double[col + '_i'] = fb_df_input[col + '_j']
-    fb_df_input = fb_df_input.append(data_double)
-    traffic_double = fb_df_traffic_growth.copy()
-    fb_df_traffic_growth = fb_df_traffic_growth.append(traffic_double)
     X = fb_df_input
     y = fb_df_traffic_growth
     if pca > 0:
@@ -107,9 +128,23 @@ def get_Xy(omega=False,pca=0):
             X_C = pca_C.fit_transform(X_C)
 
             for i in range(pca):
-                new_X.loc[:,'Component_'+str(i)] = X_C[:,i]
+                new_X['Component_'+str(i)+k] = X_C[:,i]
         X = new_X
+    if add_lags:
+        cols = ['new_cases_per_million_i', 'new_deaths_per_million_i', 'new_cases_per_million_j',
+                'new_deaths_per_million_j']
+        cols7 = [x + '_7' for x in cols]
+        cols14 = [x + '_14' for x in cols]
+        X[cols7] = np.NaN
+        X[cols14] = np.NaN
+
+        for id in X['pair_id'].unique():
+            df = X[X.pair_id == id]
+            X7 = df[cols].shift(periods=7)
+            X.loc[df.index, cols7] = X7.values
+            X14 = df[cols].shift(periods=14)
+            X.loc[df.index, cols14] = X14.values
+
+        X = X.dropna()
+        y = y.loc[X.index]
     return X,y
-
-
-

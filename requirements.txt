@@ -6,5 +6,3 @@ scikit-learn==0.24.1
 texttable==1.6.3
 latextable==0.1.1
 dataframe_image
-corrplot
-tidyverse
